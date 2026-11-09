@@ -123,7 +123,7 @@ const resolvers = {
       const f = af.find(x => String(x.itag) === '140') || af.sort((a, b) => b.bitrate - a.bitrate)[0];
       if (!f) throw new AppError('noaudio');
       const th = (j.videoThumbnails || [])[0];
-      return { title: j.title, author: j.author, thumb: th && th.url, audioUrl: f.url, server: base };
+      return { title: j.title, author: j.author, thumb: th && th.url, audioUrl: f.url, server: base, duration: Number(j.lengthSeconds) || 0 };
     },
     async list(p) {
       let pl = p.list;
@@ -158,7 +158,7 @@ const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAABErAA
 const unlock = () => { audio.src = SILENT; audio.play().catch(() => {}); };
 
 /* ---------- Player ---------- */
-let queue = [], idx = -1, sourceUrl = '', playToken = 0, retriedExpired = 0, failedServers = [], currentServer = null;
+let queue = [], idx = -1, sourceUrl = '', playToken = 0, retriedExpired = 0, failedServers = [], currentServer = null, knownDuration = 0;
 
 function renderQueue() {
   const ol = $('queue'); ol.textContent = '';
@@ -183,14 +183,14 @@ function showPlayer() {
 function saveSession() {
   if (idx < 0 || !queue[idx]) return;
   store.set('pos:' + queue[idx].id, audio.currentTime);
-  store.set('session', { url: sourceUrl, queue, idx, savedAt: Date.now(), dur: isFinite(audio.duration) ? audio.duration : 0 });
+  store.set('session', { url: sourceUrl, queue, idx, savedAt: Date.now(), dur: dur() });
 }
 
 async function play(i, startAt = 0, fromError = false) {
   if (i < 0 || i >= queue.length) { if (i >= queue.length) setStatus('Finished. Nothing more in the queue.'); return; }
   const token = ++playToken;
   if (!fromError) failedServers = [];
-  idx = i; renderQueue(); clearError();
+  idx = i; knownDuration = 0; renderQueue(); clearError();
   const r = resolver();
   const item = queue[i];
   showPlayer();
@@ -198,7 +198,7 @@ async function play(i, startAt = 0, fromError = false) {
   const start = startAt || (fromError ? 0 : store.get('pos:' + item.id, 0));
   if (!startAt && !fromError && start > 5) setStatus(`Resumed at ${fmt(start)}`);
   else setStatus('Loading…');
-  $('go').disabled = true;
+  setGo(true); setBusy(true);
   const begin = async (url) => {
     audio.src = url;
     // ignore stale events from the silent unlock clip: only seek once the real source has loaded
@@ -213,7 +213,7 @@ async function play(i, startAt = 0, fromError = false) {
   const apply = (m) => {
     if (token !== playToken) return;
     item.title = m.title; $('title').textContent = m.title; $('author').textContent = m.author;
-    currentServer = m.server || null;
+    currentServer = m.server || null; knownDuration = m.duration || 0; paint();
     renderQueue(); setMediaSession(m);
   };
   try {
@@ -222,8 +222,8 @@ async function play(i, startAt = 0, fromError = false) {
     apply(m); await begin(m.audioUrl);
     if (token === playToken && !/^Resumed/.test($('status').textContent)) setStatus('');
   } catch (e) {
-    if (token === playToken) { lastAction = () => { unlock(); play(i, start, true); }; showError(e); }
-  } finally { if (token === playToken) $('go').disabled = false; }
+    if (token === playToken) { lastAction = () => { unlock(); play(i, start, true); }; showError(e); setBusy(false); }
+  } finally { if (token === playToken) setGo(false); }
 }
 
 function setMediaSession(m) {
@@ -238,26 +238,34 @@ function setMediaSession(m) {
   h('previoustrack', () => play(idx - 1)); h('nexttrack', () => play(idx + 1));
 }
 function updatePosition() {
-  if ('mediaSession' in navigator && isFinite(audio.duration) && audio.duration > 0) {
-    try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: Math.min(audio.currentTime, audio.duration), playbackRate: audio.playbackRate }); } catch {}
+  if ('mediaSession' in navigator && dur() > 0) {
+    try { navigator.mediaSession.setPositionState({ duration: dur(), position: Math.min(audio.currentTime, dur()), playbackRate: audio.playbackRate }); } catch {}
   }
 }
 
-const skip = (d) => { audio.currentTime = Math.max(0, Math.min(audio.duration || Infinity, audio.currentTime + d)); };
+const dur = () => {
+  const d = audio.duration, k = knownDuration;
+  if (k && (!isFinite(d) || Math.abs(d - k) / k > 0.05)) return k;
+  return isFinite(d) ? d : 0;
+};
+const skip = (d) => { audio.currentTime = Math.max(0, Math.min(dur() || Infinity, audio.currentTime + d)); };
 
 /* ---------- Transport UI ---------- */
 let dragging = false, lastSave = 0;
+let busy = false; // loading or buffering: show a spinner in place of play/pause
+const setBusy = (b) => { busy = b; setToggle(); };
+const setGo = (loading) => { $('go').disabled = loading; $('go').textContent = loading ? 'Loading…' : 'Play'; };
 const setToggle = () => {
   const playing = !audio.paused && audio.src && !audio.src.startsWith('data:');
-  $('toggle').innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
-  $('toggle').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  $('toggle').innerHTML = busy ? '<span class="spin" aria-hidden="true"></span>' : playing ? ICON_PAUSE : ICON_PLAY;
+  $('toggle').setAttribute('aria-label', busy ? 'Loading' : playing ? 'Pause' : 'Play');
 };
 function paint() {
-  const d = audio.duration, t = audio.currentTime;
-  if (isFinite(d) && d > 0) { $('scrub').max = Math.floor(d); }
+  const d = dur(), t = audio.currentTime;
+  if (d > 0) { $('scrub').max = Math.floor(d); }
   if (!dragging) $('scrub').value = Math.floor(t);
   $('elapsed').textContent = fmt(dragging ? $('scrub').value : t);
-  $('remaining').textContent = isFinite(d) ? '−' + fmt(d - (dragging ? $('scrub').value : t)) : '';
+  $('remaining').textContent = d > 0 ? '−' + fmt(d - (dragging ? $('scrub').value : t)) : '';
 }
 audio.addEventListener('timeupdate', () => {
   paint();
@@ -265,12 +273,16 @@ audio.addEventListener('timeupdate', () => {
 });
 ['play', 'pause', 'playing', 'emptied'].forEach(ev => audio.addEventListener(ev, setToggle));
 audio.addEventListener('pause', () => { if (!audio.src.startsWith('data:')) saveSession(); });
+audio.addEventListener('canplay', () => { if (!audio.paused && !audio.src.startsWith('data:')) setBusy(false); });
 audio.addEventListener('loadedmetadata', () => { paint(); updatePosition(); });
 audio.addEventListener('ratechange', updatePosition);
 audio.addEventListener('seeked', updatePosition);
-audio.addEventListener('waiting', () => { if (!audio.src.startsWith('data:')) setStatus('Buffering…'); });
-audio.addEventListener('playing', () => { if (/^(Buffering|Loading|Reconnecting)/.test($('status').textContent)) setStatus(''); });
-audio.addEventListener('ended', () => { store.set('pos:' + (queue[idx] || {}).id, 0); play(idx + 1); });
+audio.addEventListener('waiting', () => { if (!audio.src.startsWith('data:')) { setStatus('Buffering…'); setBusy(true); } });
+audio.addEventListener('playing', () => { if (audio.src.startsWith('data:')) return; setBusy(false); if (/^(Buffering|Loading|Reconnecting)/.test($('status').textContent)) setStatus(''); });
+audio.addEventListener('ended', () => {
+  if (audio.src.startsWith('data:') || !queue[idx]) return; // the silent iOS-unlock clip ends instantly: not a real episode end
+  store.set('pos:' + queue[idx].id, 0); play(idx + 1);
+});
 audio.addEventListener('error', async () => {
   if (audio.src.startsWith('data:') || !queue[idx]) return;
   // stream failed or its signed URL expired: try again via the next healthy server, resuming in place
@@ -278,7 +290,7 @@ audio.addEventListener('error', async () => {
   if (retriedExpired++ < 3) { setStatus('Reconnecting…'); play(idx, audio.currentTime || 0, true); }
   else showError(new AppError('allservers', 'media error ' + (audio.error && audio.error.code)));
 });
-audio.addEventListener('playing', () => { retriedExpired = 0; });
+audio.addEventListener('playing', () => { if (!audio.src.startsWith('data:')) retriedExpired = 0; });
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveSession(); });
 
 $('toggle').onclick = () => { audio.paused ? audio.play().catch(showError) : audio.pause(); };
@@ -310,7 +322,7 @@ async function load() {
   store.set('last', raw);
   sourceUrl = raw;
   const r = resolver();
-  $('go').disabled = true; setStatus('Loading…');
+  setGo(true); setBusy(true); setStatus('Loading…');
   try {
     if (p.kind === 'video') queue = [{ id: p.id, title: '' }];
     else {
@@ -320,7 +332,7 @@ async function load() {
     }
     retriedExpired = 0;
     await play(0, p.t || 0);
-  } catch (e) { lastAction = load; showError(e); $('go').disabled = false; }
+  } catch (e) { lastAction = load; showError(e); setGo(false); setBusy(false); }
 }
 $('form').addEventListener('submit', (e) => { e.preventDefault(); unlock(); lastAction = load; load(); });
 $('retry').onclick = () => { unlock(); (lastAction || load)(); };

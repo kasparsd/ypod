@@ -12,7 +12,7 @@ Paste a link, tap **Play**. It plays through a plain `<audio>` element with lock
 
 ## Use
 
-Open the GitHub Pages site on your iPhone, then Share → **Add to Home Screen** for the most reliable background playback.
+Open the GitHub Pages site on your iPhone, then Share (under the ··· menu on newer iOS) → **Add to Home Screen** for the most reliable background playback.
 
 To run locally, serve the folder with any static server, e.g. `python3 -m http.server`.
 
