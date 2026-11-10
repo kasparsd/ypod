@@ -12,9 +12,9 @@ Paste a link, tap **Play**. It plays through a plain `<audio>` element with lock
 
 ## Use
 
-Open the GitHub Pages site on your iPhone, then Share (under the ··· menu on newer iOS) → **Add to Home Screen** for the most reliable background playback.
+Open [kasparsd.github.io/ypod](https://kasparsd.github.io/ypod/) on your iPhone, then Share (under the ··· menu on newer iOS) → **Add to Home Screen** for the most reliable background playback.
 
-To run locally, serve the folder with any static server, e.g. `python3 -m http.server`.
+To host your own copy, fork this repo and enable GitHub Pages, or upload the four files in the repo root (`index.html`, `app.js`, `manifest.json`, `icon.svg`) to any static host. To run locally, serve the folder with any static server, e.g. `python3 -m http.server`.
 
 ## How it works, and its limits
 

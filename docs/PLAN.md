@@ -45,5 +45,11 @@ Verified in iOS Simulator: sample URL plays from 5:31, and playback continues af
 - What works: a public Invidious instance with API + CORS. `yt.chocolatemoo53.com` returned metadata and audio (`/api/v1/videos/ID?local=true`, itag 140 AAC) that plays in `<audio>` in Chromium and iOS Safari simulator. It was the only one of 10 listed instances with API+CORS enabled, so expect it to disappear; the instance list is user-editable with failover.
 - Simulator quirk: Safari reports duration ~2x (6192 vs 3096 s) for this stream; seek-to-offset works (t=331 start verified). Check on a real iPhone.
 
+## Cloudflare Worker relay test (2026-11-09): not viable
+- yt-dlp's source shows why older clients 403: ANDROID_VR 1.65.10 was disabled by YouTube on 2026-08-17, and ANDROID/IOS now need PO tokens for streams. The VISIONOS client (clientVersion 1.02) lists no PO token requirement.
+- From a residential IP (this Mac), VISIONOS works with one extra step: GET the watch page first, take `visitorData` and cookies, and send them with the player call (`x-goog-visitor-id`). Result: playabilityStatus OK, direct audio URLs (itag 140) with no `n` and no `pot` param, and googlevideo served a 206 range.
+- From a Cloudflare Worker (colo RIX), the same code fails every time: the watch page returns 429, and the player call returns LOGIN_REQUIRED ("Sign in to confirm you're not a bot"). Cloudflare egress IPs are blocked. Forwarding the end user's User-Agent would not help: stream URLs are bound to the requesting IP (`ip=` param), and the player API checks client name/version, not the UA.
+- Conclusion: a relay needs a clean (residential) IP. A Worker can't be one, so no Worker relay was built. The probe Worker was deleted.
+
 ## Open decision
 Which resolver (1/2/3) is acceptable, given option 1 and 2 pull streams outside YouTube's official player.
